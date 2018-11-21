@@ -27,48 +27,65 @@ class Network(nn.Module):
 
         return x;
 
-def train(Model,trainloader,testloader,criterion,optimizer,epochs=5):
-
-    train_losses,test_losses=[],[]
+def train(Model,trainloader,testloader,criterion,optimizer,epochs):
+    test_losses,train_losses=[],[]
     for e in range(epochs):
         running_loss=0;
-        Model.train()
-        for images,labels in iter(trainloader):
-            t_images=images.view(images.shape[0],-1)
-            logits=Model.forward(t_images)
-            optimizer.zero_grad()
-            loss = criterion(logits,labels)
-            loss.backward();
+
+        Model.train();
+        for images,labels in trainloader:
+            images_t = images.view(images.shape[0],-1);
+            optimizer.zero_grad();
+
+            logits=Model.forward(images_t);
+            loss_t=criterion(logits,labels);
+            loss_t.backward();
             optimizer.step();
 
-            running_loss+=loss.item();
+            running_loss+=loss_t;
 
         else:
+            test_loss,accuracy=validation(Model,testloader,criterion);
 
-            test_losses,accuracy= validation(Model,testloader,criterion)
-            Model.train(); # This ensures to add back dropout layer for train
+            print("Epoch: {}/{}.. ".format(e+1, epochs),
+                      "Training Loss: {:.3f}.. ".format(running_loss/len(trainloader)),
+                      "Test Loss: {:.3f}.. ".format(test_loss/len(testloader)),
+                      "Test Accuracy: {:.3f}".format(accuracy))
 
-            print("Epoch: {}/{}".format(e,epochs),"Train Loss: {:.3f} ".format(running_loss/len(trainloader)),
-                  "Test_Loss: {:.3f}".format(test_loss/len(testloader)),
-                  "Test Accuracy: {:.3f}".format(accuracy/len(testloader)))
+        test_losses.append(test_loss/len(testloader))
+        train_losses.append(running_loss/len(trainloader))
+
+    return train_losses,test_losses,accuracy
 
 def validation(Model,testloader,criterion):
     test_loss=0;
     accuracy=0;
 
+    Model.eval();
+    images_num=0;
     with torch.no_grad():
-        Model.eval(); # This ensures to remove dropout layer for test
-        for images,labels in iter(testloader):
+        for images,labels in testloader:
+            images_num+=images.shape[0];
+            images_t=images.view(images.shape[0],-1);
+            logits=Model.forward(images_t);
+            loss_t=criterion(logits,labels)
+            test_loss+=loss_t;
 
-            t_images=images.view(images.shape[0],-1)
-            output=Model(t_images)
-            pred=torch.argmax(output,dim=1)
-            accuracy+=torch.mean((pred==labels).type(torch.FloatTensor))
+            _,pred_labels=torch.topk(logits,1,dim=1)
+            equality=(labels==pred_labels.view(*labels.shape))
 
-            loss = criterion(output,labels);
-            test_loss+=loss.item();
+            accuracy += torch.sum(equality)
 
-    test_losses.append(test_loss/len(testloader))
-    train_losses.append(running_loss/len(trainloader))
+    overall_acc=accuracy.float()/images_num;
+    return test_loss,overall_acc
 
-    return test_loss,accuracy
+def load_model(filepath):
+    checkpoint=torch.load(filepath)
+
+    Model = Network(checkpoint['input_size'],
+                    checkpoint['output_size'],
+                    checkpoint['hidden_layers'],
+                    dropout_p=0.2)
+    Model.load_state_dict(checkpoint['state_dict'])
+
+    return Model
